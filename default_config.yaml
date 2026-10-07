@@ -19,6 +19,9 @@ release: ""
 # Emit a message-level event when an API handler returns >=500.
 # (ApiHandler swallows exceptions into 500s — the stack is already gone, so
 # these events carry request path/method + trace ID rather than tracebacks.)
+# Note: inbound traceparent adoption + outbound traceparent response
+# stamping are always-on while the plugin is active — this flag gates ONLY
+# the error-event emission.
 api_error_events: true
 
 # Per-run breadcrumb ring size (tool names + statuses only, never content).

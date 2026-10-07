@@ -17,9 +17,12 @@ class GlitchtipToolBreadcrumb(Extension):
 
             if not runtime.is_active():
                 return
-            ok = bool(response is not None and not getattr(response, "break_loop", False))
             breadcrumbs.crumb(
-                "tool", str(tool_name or "unknown"), {"ok": ok}
+                "tool",
+                str(tool_name or "unknown"),
+                # break_loop is normal control flow (finish/intervention),
+                # not a failure — record it neutrally
+                {"break_loop": bool(getattr(response, "break_loop", False))},
             )
         except Exception:
             pass

@@ -29,6 +29,13 @@ Set the DSN via environment (preferred — keeps it out of config files):
 export GLITCHTIP_DSN="https://<public_key>@<your-glitchtip-host>/<project_id>"
 ```
 
+A path prefix before the project id is kept — reverse-proxied installs like
+`https://host/glitchtip/42` work unchanged. The transport **refuses
+redirects** rather than forward the event body + `X-Sentry-Auth` to a
+different host; a mis-targeted DSN fails closed (see logs). Prefer `https` —
+an `http://` DSN to a non-loopback host logs a warning since event payloads
+traverse the network in cleartext.
+
 or the `dsn` field in plugin settings (`external` section). Optional:
 
 | Setting | Env | Default |
@@ -37,9 +44,13 @@ or the `dsn` field in plugin settings (`external` section). Optional:
 | `dsn` | `GLITCHTIP_DSN` | — |
 | `environment` | `GLITCHTIP_ENV` | `local` |
 | `release` | `GLITCHTIP_RELEASE` | — |
-| `api_error_events` | — | `true` |
+| `api_error_events`¹ | — | `true` |
 | `breadcrumbs_max` | — | `50` |
 | `send_timeout_s` | — | `5` |
+
+¹ `api_error_events` gates only the ≥500 event emission — inbound
+`traceparent` adoption and outbound response stamping stay on while the
+plugin is active.
 
 ## What gets reported
 
@@ -51,7 +62,9 @@ or the `dsn` field in plugin settings (`external` section). Optional:
 
 Every event carries `tags.trace_id` and `contexts.trace` — an OTel-format
 trace ID adopted from the inbound `traceparent` header when present, else
-generated per request.
+minted at capture time (agent loops run on worker threads that never see an
+inbound header, so they get fresh traces). Responses to API calls are
+stamped with the active `traceparent` so a front end can join the trace.
 
 ## Correlating with Langfuse
 
@@ -64,13 +77,34 @@ shared trace ID:
    header keep that trace ID end-to-end, so gateway/front-door traces join
    up automatically.
 
+## Privacy & redaction
+
+- Sensitive request headers are stripped before events ship (auth, cookies,
+  CSRF/session tokens, API keys — see `_SENSITIVE_HEADERS` in
+  `helpers/event.py`).
+- A small always-on pattern scrubber masks common secret shapes (Bearer
+  tokens, `sk-*`/`gh*`/`AKIA` keys, `password=…` style assignments, private
+  key blocks) inside exception text, messages, and source context lines. If
+  `a0-plugin-omaseal` is installed, its `mask_text` registry layers on top.
+- This is **best-effort**, not a guarantee — a secret that matches no
+  pattern still ships. Keep DSNs scoped to a private GlitchTip and treat
+  event payloads as semi-sensitive.
+- Breadcrumbs record tool names + statuses only, never args or output —
+  forbidden key names are dropped outright.
+
 ## Known limitations
 
 - API events are **message-level** (no stack): a0's `ApiHandler` formats
   exceptions into the 500 response before any hook can see the object.
   Agent-loop events carry full stacks.
 - No performance/transaction tracing — GlitchTip is error-tracking only.
-- Breadcrumbs record tool names + statuses only, never args or output.
+- **Outages drop events.** One failed POST suppresses sending for 60 s
+  (cooldown), and at most 20 captures run concurrently — during a GlitchTip
+  outage or an exception storm, some events are intentionally discarded to
+  protect the host app.
+- Only verified against the Sentry **store** endpoint
+  (`POST /api/<id>/store/`); a live self-hosted GlitchTip smoke test is
+  recommended after install (`glitchtip_test` API).
 
 ## Test
 

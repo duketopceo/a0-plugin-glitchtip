@@ -19,8 +19,11 @@ class GlitchtipTest(ApiHandler):
         from usr.plugins.glitchtip.helpers import runtime
 
         if not runtime.is_active():
-            return {"ok": False, "error": "glitchtip not configured (no DSN)"}
-        event_id = runtime.capture_message(
+            return {
+                "ok": False,
+                "error": "glitchtip inactive (disabled or no valid DSN)",
+            }
+        event_id = await runtime.acapture_message(
             "GlitchTip test event from a0-plugin-glitchtip",
             level="info",
             tags={"surface": "api_test"},

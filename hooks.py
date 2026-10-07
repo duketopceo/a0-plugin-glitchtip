@@ -1,43 +1,29 @@
-"""Plugin lifecycle hooks.
+"""Plugin lifecycle hooks — install()/uninstall() called by a0's plugin
+manager. Nothing to provision or clean up: the plugin is stdlib-only and
+lazily activates when a DSN is configured.
 
-install(): nothing to provision — the plugin is stdlib-only and lazily
-activates when a DSN is configured. We write a small probe note so the WebUI
-can show "configured vs not" if it wants.
-uninstall(): removes the probe note; there is no other plugin-owned state
-(the plugin never writes to usr/).
+Imports are lazy — the plugin loader's module import is unguarded upstream,
+so a module-level failure here could abort the hook sweep.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import logging
-
-log = logging.getLogger("a0.glitchtip")
-
-PROBE_FILE = ".glitchtip-probe.json"
-
-
-def _probe_path() -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), PROBE_FILE)
+import os
 
 
 def install() -> bool:
     try:
-        configured = bool((os.environ.get("GLITCHTIP_DSN") or "").strip())
-        with open(_probe_path(), "w") as f:
-            json.dump({"dsn_env_present": configured}, f)
-        log.info("a0-plugin-glitchtip installed (dsn_env=%s)", configured)
+        from usr.plugins.glitchtip.helpers import ENV_DSN, LOG_NAME
+
+        logging.getLogger(LOG_NAME).info(
+            "a0-plugin-glitchtip installed (dsn_env=%s)",
+            bool((os.environ.get(ENV_DSN) or "").strip()),
+        )
     except Exception:
-        pass  # probe is advisory; never block install
+        pass  # never block install
     return True
 
 
 def uninstall() -> bool:
-    try:
-        os.remove(_probe_path())
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
     return True

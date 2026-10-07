@@ -24,18 +24,25 @@ def new_span_id() -> str:
 
 
 def parse_traceparent(header: str | None) -> tuple[str, str] | None:
-    """Parse ``00-<32hex>-<16hex>-<flags>``. Returns (trace_id, span_id)|None."""
+    """Parse ``00-<32hex>-<16hex>-<flags>``. Returns (trace_id, span_id)|None.
+
+    Version and flags must be 2-hex fields; version ``ff`` is forbidden per
+    the W3C spec (it would make the header indistinguishable from a random
+    opaque string)."""
     if not header:
         return None
     parts = header.strip().split("-")
     if len(parts) != 4:
         return None
-    _ver, tid, sid, _flags = parts
-    if len(tid) != 32 or len(sid) != 16:
+    ver, tid, sid, flags = parts
+    if len(ver) != 2 or len(flags) != 2 or len(tid) != 32 or len(sid) != 16:
         return None
     try:
+        if int(ver, 16) == 0xFF:
+            return None
         int(tid, 16)
         int(sid, 16)
+        int(flags, 16)
     except ValueError:
         return None
     if tid == "0" * 32 or sid == "0" * 16:  # all-zero IDs are invalid per spec
@@ -44,18 +51,19 @@ def parse_traceparent(header: str | None) -> tuple[str, str] | None:
 
 
 def ensure(traceparent: str | None = None) -> tuple[str, str]:
-    """Adopt the inbound traceparent or keep/generate the current context."""
+    """Adopt the inbound traceparent (new child span) or keep/generate the
+    current context. Returns (trace_id, span_id)."""
+    tid: str | None = None
     if traceparent:
         parsed = parse_traceparent(traceparent)
         if parsed:
-            tid, _parent_span = parsed
-            _trace_id.set(tid)
-            _span_id.set(new_span_id())
-            return tid, _span_id.get()  # type: ignore[return-value]
-    if _trace_id.get() is None:
-        _trace_id.set(new_trace_id())
-        _span_id.set(new_span_id())
-    return _trace_id.get(), _span_id.get()  # type: ignore[return-value]
+            tid = parsed[0]
+    if tid is None:
+        tid = _trace_id.get() or new_trace_id()
+    sid = new_span_id()
+    _trace_id.set(tid)
+    _span_id.set(sid)
+    return tid, sid
 
 
 def current() -> tuple[str | None, str | None]:
@@ -63,6 +71,9 @@ def current() -> tuple[str | None, str | None]:
 
 
 def traceparent() -> str | None:
+    """Current context as an outbound ``traceparent`` header value — used by
+    the ApiHandler wrapper to stamp responses, and available to any future
+    outbound-propagation caller."""
     tid, sid = current()
     if not tid or not sid:
         return None

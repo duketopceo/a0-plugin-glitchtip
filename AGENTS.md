@@ -10,6 +10,7 @@ README does not say.
 ```bash
 # Tests — standalone, offline, no A0 checkout required
 python3.12 -m pytest tests/ -q
+# …or without pytest installed: uv run --with pytest python -m pytest tests/ -q
 
 # CI (.github/workflows/ci.yml): Python 3.12, pip install pytest, pytest -q
 ```
@@ -23,16 +24,18 @@ change.
 |---|---|
 | `plugin.yaml` | Manifest — `name: glitchtip` is the `usr/plugins/glitchtip` install path; do not rename casually. |
 | `default_config.yaml` | Endpoints/policy only. A real DSN is semi-secret (public key) — prefer `GLITCHTIP_DSN` env over writing it here. |
-| `helpers/dsn.py` | Sentry DSN parse → `{base, project_id, public_key}` + store URL/auth header. |
-| `helpers/event.py` | exception/message → Sentry **store** event dict; stack frames via `traceback.extract_tb`; header redaction + injectable secret redactor. |
-| `helpers/client.py` | stdlib `urllib` POST to `{base}/api/{project}/store/` with `X-Sentry-Auth`. **Never raises** — failures return None. |
-| `helpers/runtime.py` | Facade: `configure()` (env > config), `capture_exception`, `capture_message`, `is_active`, `reset` (test hook). |
-| `helpers/trace_context.py` | W3C `traceparent` parse/generate + ContextVar storage. |
-| `helpers/breadcrumbs.py` | Ring buffer; strips forbidden keys (`value`, `args`, `output`, …) defensively. |
-| `extensions/python/startup_migration/_20_*` | Plugin init: configure + apply the ApiHandler patch. Runs in `initialize.py`, sync context, `agent=None`. |
+| `helpers/dsn.py` | Sentry DSN parse → `Dsn(base, project_id, public_key, scheme)` + store URL/auth header. Keeps reverse-proxy path prefixes; `public_key` excluded from repr. |
+| `helpers/event.py` | exception/message → Sentry **store** event dict; frames in `extract_tb` order (caller→raise-site); `_SENSITIVE_HEADERS` denylist + fail-closed per-field redactor. |
+| `helpers/client.py` | stdlib `urllib` POST of pre-serialized bytes to `{base}/api/{project}/store/` with `X-Sentry-Auth`; **redirects refused** (would leak auth+body). Never raises — failures return None. |
+| `helpers/runtime.py` | Facade: `configure()` (env > config), `capture_*` (sync) / `acapture_*` (`asyncio.to_thread`), `spawn()` (fire-and-forget), 60s send-failure cooldown, `_MAX_IN_FLIGHT` cap, baseline redactor + omaseal layering, `is_noise_exception`/`report_loop_exception` shared by the `_85_` extensions, `_reset` (test hook). |
+| `helpers/config.py` | `DEFAULTS` + `get_config()` = a0's `get_plugin_config` merge (which already folds in `default_config.yaml`); `num`/`truthy` safe coercion. |
+| `helpers/trace_context.py` | W3C `traceparent` parse/generate + ContextVar storage; rejects version `ff`, all-zero IDs, malformed fields. |
+| `helpers/breadcrumbs.py` | Ring buffer; strips forbidden keys (`value`, `args`, `output`, …) defensively; `reset()` restores default capacity. |
+| `extensions/python/startup_migration/_20_*` | Plugin init: configure + apply the ApiHandler patch. Runs in `initialize.py` via `call_extensions_sync` — **sync execute, fully guarded** (a raise aborts a0 boot). |
 | `extensions/python/_functions/.../handle_exception/end/_85_*` | Exception capture — see ordering contract below. |
 | `extensions/python/tool_execute_after/_30_*` | Tool-name/status breadcrumb — never args/output. |
 | `api/glitchtip_test.py` | `POST /api/plugins/glitchtip/glitchtip_test` test event; auth+CSRF inherited. |
+| `hooks.py` | install/uninstall lifecycle — log only, lazy imports, never raises. |
 
 ## Conventions that will bite you
 
@@ -55,6 +58,31 @@ change.
   body to recover the stack: that duplicates core logic and rots silently.
 - **Never-raise rule.** Every public helper and every extension `execute`
   swallows its own failures — error reporting must never break the host.
+- **Sync `capture_*` block the loop.** They do a blocking urllib POST (up to
+  `send_timeout_s`). In async contexts (extensions, ApiHandler code) use
+  `acapture_*`, which offload via `asyncio.to_thread`; ContextVars propagate
+  through `to_thread`, so trace context survives the hop.
+- **Send-failure cooldown.** One failed POST suppresses all sending for 60s
+  (`_SEND_COOLDOWN_S`) — an unreachable GlitchTip plus an exception storm must
+  not compound into repeated connect+timeout work. "Second event never sent"
+  in tests/debugging is this.
+- **Config keys are a three-way sync.** A new key lands in
+  `helpers/config.py DEFAULTS`, `default_config.yaml`, and the README settings
+  table. `default_config.yaml` and `get_plugin_config("glitchtip")` merge over
+  `DEFAULTS` in that order.
+- **Redaction is layered.** `_baseline_redact` (regex denylist — Bearer/`sk-`/
+  `gh*`/`AKIA`/`key=value`/PEM blocks) always runs; when `a0-plugin-omaseal` is
+  installed, its `mask_text` registry composes over it. The soft import in
+  `_resolve_redactor` is optional wiring, not a missing dep — do not "fix" it.
+- **`_85_` dedup marker.** `report_loop_exception` sets `exc._glitchtip_reported`
+  so an exception traversing both Agent- and AgentContext-level hooks emits
+  exactly one event.
+- **Spawn is fire-and-forget.** `runtime.spawn(coro)` schedules captures the
+  response/raise path must not wait on (API events); refs live in
+  `runtime._tasks` until done. Tests drain via the `run()` helper in conftest.
+- **`_reset()` leaves the ApiHandler patch installed** — intentionally one-way
+  for the process; the wrapper goes pure-passthrough when inactive (tests
+  un-patch via `ApiHandler._glitchtip_original`).
 - **Tests must stay offline** — loopback `http.server` fixtures only, no real
   GlitchTip, no sentry_sdk.
 - **DSN auth is the public key only.** Still never log a DSN — it identifies

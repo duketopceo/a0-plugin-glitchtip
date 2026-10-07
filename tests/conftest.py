@@ -56,11 +56,15 @@ class ApiHandler:
 
     async def handle_request(self, request):
         """Mirrors upstream: wraps process(), swallows exceptions into a
-        plain-text 500. The plugin's patch observes this response."""
+        plain-text 500. The plugin's patch observes this response.
+        `_propagate=True` models handler flavors that re-raise instead of
+        swallowing — exercises the wrapper's capture-then-reraise branch."""
         try:
             output = await self.process({}, request)
             return Response(status=200, body=output)
         except Exception as e:
+            if getattr(self, "_propagate", False):
+                raise
             return Response(status=500, body=f"API error: {e}")
 
     async def process(self, input, request):
@@ -71,6 +75,7 @@ class Response:
     def __init__(self, message="", status=200, body=None, **kw):
         self.message = message
         self.status_code = status
+        self.headers = {}  # Quart Response has a headers mapping
         self._body = body if body is not None else message
 
     def get_data(self, as_text=False):
@@ -137,26 +142,92 @@ class FakeContext:
 
 
 def run(coro):
-    return asyncio.run(coro)
+    """Drive a coroutine to completion, then drain any captures the code
+    spawned via runtime.spawn() — asyncio.run cancels pending tasks at
+    teardown, so without the drain fire-and-forget captures would silently
+    never execute in tests (in real a0 the loop persists)."""
+    async def _main():
+        result = await coro
+        from usr.plugins.glitchtip.helpers import runtime
 
+        tasks = list(runtime._tasks)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return result
+
+    return asyncio.run(_main())
+
+
+import json  # noqa: E402
+import threading  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
 
 import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _clean_runtime():
-    """Every test starts with the plugin unconfigured, no trace context, and
-    the ApiHandler patch (process-global when applied) rolled back."""
-    from usr.plugins.glitchtip.helpers import breadcrumbs, runtime, trace_context
+    """Every test starts with the plugin unconfigured (runtime.reset clears
+    client/latch/cooldown/redactor + breadcrumbs + trace context) and the
+    ApiHandler patch (process-global when applied) rolled back."""
+    from usr.plugins.glitchtip.helpers import runtime
 
-    runtime.reset()
-    trace_context.reset()
-    breadcrumbs.clear()
+    runtime._reset()
     yield
-    runtime.reset()
-    trace_context.reset()
-    breadcrumbs.clear()
+    runtime._reset()
     orig = getattr(ApiHandler, "_glitchtip_original", None)
     if orig is not None:
         ApiHandler.handle_request = orig
         del ApiHandler._glitchtip_original
+
+
+class _StoreHandler(BaseHTTPRequestHandler):
+    """Loopback stand-in for GlitchTip's store endpoint — encodes the Sentry
+    ingest contract (POST /api/<project>/store/, X-Sentry-Auth). Only accepts
+    project 9 so tests can also assert the 404 path."""
+
+    received: list = []
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length)
+        type(self).received.append(
+            {
+                "path": self.path,
+                "auth": self.headers.get("X-Sentry-Auth"),
+                "body": json.loads(body or b"{}"),
+            }
+        )
+        if self.path == "/api/8/store/":
+            # redirect fixture: a compliant client must NOT follow this —
+            # forwarding would leak X-Sentry-Auth + the event body
+            self.send_response(302)
+            self.send_header("Location", "/api/9/store/")
+            self.end_headers()
+            return
+        if self.path == "/api/7/store/":
+            # 200 with no id field — exercises the event-id fallback path
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+            return
+        status = 200 if self.path == "/api/9/store/" else 404
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"id": "ok"}')
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture()
+def live_dsn():
+    """Yields (dsn, events_list): a loopback store server + captured posts."""
+    _StoreHandler.received = []
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _StoreHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://pubkey@127.0.0.1:{srv.server_port}/9", _StoreHandler.received
+    srv.shutdown()
+    srv.server_close()

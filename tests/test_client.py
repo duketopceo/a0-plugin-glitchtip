@@ -1,69 +1,50 @@
-"""Transport tests against a loopback http.server — offline, no external
-network. The fixture encodes the Sentry store contract the plan specifies."""
+"""Transport tests against the shared loopback store fixture — offline, no
+external network. The fixture encodes the Sentry store contract the plan
+specifies (POST /api/<project>/store/ + X-Sentry-Auth) plus a /redirect path
+to pin the no-redirect transport policy."""
 
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-import pytest
 
 from usr.plugins.glitchtip.helpers.client import Client
 from usr.plugins.glitchtip.helpers.dsn import parse_dsn
 
 
-class _StoreHandler(BaseHTTPRequestHandler):
-    received = []
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length)
-        type(self).received.append(
-            {"path": self.path, "auth": self.headers.get("X-Sentry-Auth"),
-             "body": json.loads(body or b"{}")}
-        )
-        status = 200 if "/api/9/store/" in self.path else 404
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"id": "evt-abc-123"}')
-
-    def log_message(self, *a):
-        pass
-
-
-@pytest.fixture()
-def server():
-    _StoreHandler.received = []
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), _StoreHandler)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield srv
-    srv.shutdown()
-    srv.server_close()
-
-
-def _client_for(port) -> Client:
-    dsn = parse_dsn(f"http://pubkey@127.0.0.1:{port}/9")
-    assert dsn is not None
-    return Client(dsn, timeout_s=2)
-
-
-def test_store_post_contract(server):
-    c = _client_for(server.server_port)
-    eid = c.send_event({"event_id": "e" * 32, "message": "hi"})
-    assert eid == "evt-abc-123"
-    hit = _StoreHandler.received[-1]
+def test_store_post_contract(live_dsn):
+    dsn, events = live_dsn
+    c = Client(parse_dsn(dsn), timeout_s=2)
+    eid = c.send_event(json.dumps({"event_id": "e" * 32, "message": "hi"}).encode(), "e" * 32)
+    assert eid == "ok"
+    hit = events[-1]
     assert hit["path"] == "/api/9/store/"
     assert "sentry_key=pubkey" in hit["auth"]
+    assert "a0-plugin-glitchtip/" in hit["auth"]
     assert hit["body"]["message"] == "hi"
 
 
-def test_non_2xx_returns_none(server):
-    dsn = parse_dsn(f"http://pubkey@127.0.0.1:{server.server_port}/99")  # →404
-    c = Client(dsn, timeout_s=2)
-    assert c.send_event({"message": "x"}) is None
+def test_success_returns_event_id_when_response_has_none(live_dsn):
+    # /api/7/store/ answers 200 with no id — fall back to the local event id
+    dsn, _events = live_dsn
+    c = Client(parse_dsn(dsn.replace("/9", "/7")), timeout_s=2)
+    assert c.send_event(b'{"message": "x"}', "f" * 32) == "f" * 32
+
+
+def test_non_2xx_returns_none(live_dsn):
+    dsn, _events = live_dsn
+    bad = parse_dsn(dsn.replace("/9", "/99"))  # fixture 404s other projects
+    c = Client(bad, timeout_s=2)
+    assert c.send_event(b'{"message": "x"}') is None
+
+
+def test_redirect_refused(live_dsn):
+    # /api/8/store/ 302s to /api/9/store/ — urllib's default opener would
+    # follow it and forward X-Sentry-Auth to the target. Our client must not.
+    dsn, _events = live_dsn
+    redir = parse_dsn(dsn.replace("/9", "/8"))
+    c = Client(redir, timeout_s=2)
+    assert c.send_event(b'{"message": "x"}') is None
 
 
 def test_unreachable_returns_none_never_raises():
     dsn = parse_dsn("http://k@127.0.0.1:1/9")  # port 1 refuses
     c = Client(dsn, timeout_s=1)
-    assert c.send_event({"message": "x"}) is None
+    assert c.send_event(b'{"message": "x"}') is None

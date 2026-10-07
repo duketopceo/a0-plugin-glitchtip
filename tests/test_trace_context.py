@@ -26,11 +26,36 @@ def test_traceparent_roundtrip():
 
 
 def test_malformed_traceparent_ignored():
-    for bad in ["", "garbage", "00-123-456-01", "zz-" + "a" * 32 + "-" + "b" * 16 + "-01",
-                "00-" + "0" * 32 + "-" + "b" * 16 + "-01"]:  # all-zero trace_id invalid
+    tid32 = "4bf92f3577b34da6a3ce929d0e0e4736"
+    sid16 = "00f067aa0ba902b7"
+    for bad in [
+        "", "garbage", "00-123-456-01",
+        "zz-" + "a" * 32 + "-" + "b" * 16 + "-01",          # non-hex version
+        "ff-" + tid32 + "-" + sid16 + "-01",                 # version ff forbidden
+        f"00-{tid32}-{sid16}-1",                             # flags must be 2 hex
+        f"00-{tid32}-{sid16}-zz",                            # non-hex flags
+        f"00-{tid32}-{sid16}",                               # missing flags field
+        "00-" + "0" * 32 + "-" + sid16 + "-01",              # all-zero trace_id
+        "00-" + tid32 + "-" + "0" * 16 + "-01",              # all-zero span_id
+        f"0-{tid32}-{sid16}-01",                             # version must be 2 hex
+    ]:
         tc.reset()
         tid, _sid = tc.ensure(bad)
         assert tid and len(tid) == 32  # fell back to fresh generation
+        assert tid != "0" * 32
+
+
+def test_parse_normalizes_case():
+    parsed = tc.parse_traceparent(
+        "00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01")
+    assert parsed == ("4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7")
+
+
+def test_ensure_reuses_trace_but_new_span():
+    tid1, sid1 = tc.ensure()
+    tid2, sid2 = tc.ensure()
+    assert tid2 == tid1      # same trace within one context
+    assert sid2 != sid1      # child span per ensure()
 
 
 def test_reset_clears():
