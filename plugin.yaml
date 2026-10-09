@@ -1,0 +1,8 @@
+name: glitchtip
+title: GlitchTip Error Tracking
+description: Reports unhandled agent-loop and API exceptions to a self-hosted GlitchTip (Sentry-compatible) instance, tagged with an OTel-compatible trace ID for correlation with Langfuse traces. Stdlib-only, zero dependencies.
+version: 0.1.0
+settings_sections:
+  - external
+per_project_config: false
+per_agent_config: false

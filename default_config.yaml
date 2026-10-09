@@ -1,0 +1,31 @@
+# GlitchTip plugin settings — endpoints and policy only.
+# The DSN embeds the project's PUBLIC key (semi-secret); still prefer the
+# GLITCHTIP_DSN environment variable over writing it here.
+
+# Master switch.
+enabled: true
+
+# Sentry-compatible DSN of your GlitchTip project:
+#   https://<public_key>@<glitchtip-host>/<project_id>
+# Env override: GLITCHTIP_DSN (wins over this field).
+dsn: ""
+
+# Event environment tag. Env override: GLITCHTIP_ENV.
+environment: "local"
+
+# Release tag (e.g. a0 version or git sha). Env override: GLITCHTIP_RELEASE.
+release: ""
+
+# Emit a message-level event when an API handler returns >=500.
+# (ApiHandler swallows exceptions into 500s — the stack is already gone, so
+# these events carry request path/method + trace ID rather than tracebacks.)
+# Note: inbound traceparent adoption + outbound traceparent response
+# stamping are always-on while the plugin is active — this flag gates ONLY
+# the error-event emission.
+api_error_events: true
+
+# Per-run breadcrumb ring size (tool names + statuses only, never content).
+breadcrumbs_max: 50
+
+# HTTP timeout for the event POST, seconds.
+send_timeout_s: 5

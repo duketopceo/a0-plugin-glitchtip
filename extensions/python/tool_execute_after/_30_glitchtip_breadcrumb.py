@@ -1,0 +1,28 @@
+"""Breadcrumb per tool call — name and ok/err status only.
+
+Tool args and output text can carry secrets; the crumb deliberately records
+neither (helpers/breadcrumbs.py also strips forbidden keys defensively).
+"""
+
+from __future__ import annotations
+
+from helpers.extension import Extension
+
+
+class GlitchtipToolBreadcrumb(Extension):
+    async def execute(self, tool_name: str | None = None, response=None, **kwargs):
+        del kwargs
+        try:
+            from usr.plugins.glitchtip.helpers import breadcrumbs, runtime
+
+            if not runtime.is_active():
+                return
+            breadcrumbs.crumb(
+                "tool",
+                str(tool_name or "unknown"),
+                # break_loop is normal control flow (finish/intervention),
+                # not a failure — record it neutrally
+                {"break_loop": bool(getattr(response, "break_loop", False))},
+            )
+        except Exception:
+            pass

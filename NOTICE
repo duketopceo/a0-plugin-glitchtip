@@ -1,0 +1,27 @@
+# NOTICE
+
+This repository (**a0-plugin-glitchtip**, `duketopceo/a0-plugin-glitchtip`)
+is a plugin for [Agent Zero](https://github.com/agent0ai/agent-zero).
+
+## Upstream
+
+Agent Zero is licensed under the MIT License by **Agent Zero, s.r.o**
+(contact: pr@agent-zero.ai). No upstream source files are vendored here, but
+this plugin targets Agent Zero's plugin APIs and adapts patterns from it.
+
+## Provenance
+
+- The extraction spec and capability design come from the Khan fork's
+  `helpers/glitchtip.py`, `helpers/observability.py`, and
+  `helpers/request_id.py` (https://github.com/duketopceo/khan), itself
+  MIT-licensed work by Luke Kimball / duketopceo.
+- The transport layer was rewritten stdlib-only (Sentry store endpoint via
+  `urllib`) because a0 has no plugin dependency mechanism and `sentry_sdk`
+  is not an upstream runtime dependency.
+
+## This plugin
+
+Original work here is Copyright (c) 2026 Luke Kimball / duketopceo, released
+under the MIT terms in `LICENSE`.
+
+Preserve the upstream copyright notice and this NOTICE when redistributing.

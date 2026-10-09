@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.DS_Store
+
+# local agent tooling (see a0-plugin-omaseal convention)
+.devin/
+.codebase-memory/
