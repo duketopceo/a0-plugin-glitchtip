@@ -26,4 +26,11 @@ def install() -> bool:
 
 
 def uninstall() -> bool:
+    try:
+        from usr.plugins.glitchtip.helpers import LOG_NAME, runtime
+
+        runtime._reset()  # client, latch, cooldown, redactor, crumbs, trace
+        logging.getLogger(LOG_NAME).info("a0-plugin-glitchtip uninstalled")
+    except Exception:
+        pass  # never block uninstall
     return True

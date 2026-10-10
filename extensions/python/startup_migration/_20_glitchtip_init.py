@@ -89,11 +89,18 @@ def _wrap_handle_request(*, emit_api_errors: bool) -> None:
             return
 
         async def wrapped(self, request):
-            from usr.plugins.glitchtip.helpers import runtime, trace_context
-
-            if not runtime.is_active():
-                # plugin disabled mid-process — patch is one-way, so make
-                # the inactive path a pure passthrough (no headers, no
+            try:
+                from usr.plugins.glitchtip.helpers import (
+                    runtime, trace_context,
+                )
+                active = runtime.is_active()
+            except Exception:
+                # plugin removed mid-process — the one-way patch survives but
+                # must not turn every request into an ImportError
+                active = False
+            if not active:
+                # plugin disabled/removed mid-process — patch is one-way, so
+                # make the inactive path a pure passthrough (no headers, no
                 # context writes, no events)
                 return await original(self, request)
             try:

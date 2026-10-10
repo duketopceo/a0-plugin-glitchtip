@@ -4,6 +4,7 @@ breadcrumb hygiene, ApiHandler patch behavior, send cooldown."""
 import asyncio
 import importlib
 import json
+import sys
 
 import pytest
 
@@ -43,6 +44,19 @@ def test_disabled_flag(monkeypatch):
     monkeypatch.delenv("GLITCHTIP_DSN", raising=False)
     assert runtime.configure({"enabled": False, "dsn": "http://k@h/1"}) is False
     assert runtime.is_active() is False
+
+
+def test_configure_disable_after_active_tears_down(live_dsn, monkeypatch):
+    # enabled:false on a later configure must win over the configured latch —
+    # otherwise "disable" can never take effect without a process restart.
+    dsn, _ = live_dsn
+    monkeypatch.setenv("GLITCHTIP_DSN", dsn)
+    assert runtime.configure({"enabled": True}) is True
+    assert runtime.is_active()
+    assert runtime.configure({"enabled": False}) is False
+    assert runtime.is_active() is False
+    assert runtime.configure({"enabled": True}) is True  # re-arms cleanly
+    assert runtime.is_active()
 
 
 def test_configure_from_config_and_capture(live_dsn, monkeypatch):
@@ -444,6 +458,36 @@ def test_wrapper_pure_passthrough_when_inactive_mid_process(live_dsn, monkeypatc
 
     resp = run(OkHandler().handle_request(FakeRequest(
         headers={"traceparent": "00-" + "ab" * 16 + "-" + "cd" * 8 + "-01"})))
+    assert resp.status_code == 200
+    assert "traceparent" not in resp.headers
+    assert events == []
+
+
+def test_wrapper_passthrough_after_plugin_removal(live_dsn, monkeypatch):
+    # Plugin files removed mid-process: the one-way patch survives, so its
+    # in-wrapper import must degrade to passthrough — not 500 every request.
+    dsn, events = live_dsn
+    monkeypatch.setenv("GLITCHTIP_DSN", dsn)
+    mod = _load_init_ext()
+    mod.GlitchtipInit().execute()
+    from helpers.api import ApiHandler
+
+    class OkHandler(ApiHandler):
+        async def process(self, input, request):
+            return {"ok": True}
+
+    # Poison the package entry only for the wrapped call — `run()`'s own
+    # post-await import would hit the same ImportError otherwise.
+    helpers_mod = sys.modules["usr.plugins.glitchtip.helpers"]
+
+    async def drive():
+        sys.modules["usr.plugins.glitchtip.helpers"] = None
+        try:
+            return await OkHandler().handle_request(FakeRequest())
+        finally:
+            sys.modules["usr.plugins.glitchtip.helpers"] = helpers_mod
+
+    resp = run(drive())
     assert resp.status_code == 200
     assert "traceparent" not in resp.headers
     assert events == []

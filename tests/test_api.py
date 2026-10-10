@@ -39,3 +39,13 @@ def test_hooks_install_uninstall_never_raise():
 
     assert hooks.install() is True
     assert hooks.uninstall() is True
+
+
+def test_uninstall_resets_runtime(live_dsn, monkeypatch):
+    dsn, _ = live_dsn
+    monkeypatch.setenv("GLITCHTIP_DSN", dsn)
+    assert runtime.configure({"enabled": True}) is True
+    from usr.plugins.glitchtip import hooks
+
+    assert hooks.uninstall() is True
+    assert runtime.is_active() is False  # client/latch/cooldown all dropped

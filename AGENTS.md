@@ -81,8 +81,11 @@ change.
   response/raise path must not wait on (API events); refs live in
   `runtime._tasks` until done. Tests drain via the `run()` helper in conftest.
 - **`_reset()` leaves the ApiHandler patch installed** — intentionally one-way
-  for the process; the wrapper goes pure-passthrough when inactive (tests
-  un-patch via `ApiHandler._glitchtip_original`).
+  for the process; the wrapper goes pure-passthrough when inactive OR when the
+  plugin package can no longer be imported (post-removal requests must not
+  500). `hooks.uninstall()` calls `_reset()`; `enabled:false` on a later
+  `configure()` also tears down (disable wins over the configured latch). Tests
+  un-patch via `ApiHandler._glitchtip_original`.
 - **Tests must stay offline** — loopback `http.server` fixtures only, no real
   GlitchTip, no sentry_sdk.
 - **DSN auth is the public key only.** Still never log a DSN — it identifies
