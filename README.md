@@ -1,15 +1,15 @@
-# a0-plugin-glitchtip
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/wordmark-dark.svg">
+    <img alt="a0-plugin-glitchtip" src="assets/brand/wordmark.svg" height="56">
+  </picture>
+</p>
 
-GlitchTip error tracking for [Agent Zero](https://github.com/agent0ai/agent-zero)
-— self-hosted, Sentry-compatible, **zero dependencies** (stdlib `urllib` only).
+Reports unhandled [Agent Zero](https://github.com/agent0ai/agent-zero) agent-loop and API exceptions to a self-hosted GlitchTip (Sentry-compatible) instance, tagged with an OTel-format trace ID.
 
-Unhandled agent-loop exceptions and API 500s become GlitchTip events tagged
-with a W3C `traceparent`/OTel-compatible **trace ID**, so you can correlate
-them with Langfuse traces (e.g. the community `langfuse_observability`
-plugin).
+Status: v0.1.0, offline tests only, not yet smoke-tested against a live GlitchTip. See [ROADMAP.md](ROADMAP.md). Zero dependencies (stdlib `urllib` only). Extracted from [Khan](https://github.com/duketopceo/Khan) (issue [Khan#193](https://github.com/duketopceo/Khan/issues/193)).
 
-Extracted from [Khan](https://github.com/duketopceo/Khan) — issue
-[Khan#193](https://github.com/duketopceo/Khan/issues/193).
+<!-- TODO: screenshot of the settings panel from a running a0 -->
 
 ## Install
 
@@ -21,13 +21,29 @@ git clone https://github.com/duketopceo/a0-plugin-glitchtip \
 
 Enable the plugin in the WebUI plugin list, then configure the DSN.
 
-## Configure
-
-Set the DSN via environment (preferred — keeps it out of config files):
+## Quick start
 
 ```bash
 export GLITCHTIP_DSN="https://<public_key>@<your-glitchtip-host>/<project_id>"
 ```
+
+Restart a0, then call `POST /api/plugins/glitchtip/glitchtip_test` (auth and CSRF inherited from a0). It returns `{ok, event_id}`; the event should appear in your GlitchTip project.
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[Agent / AgentContext handle_exception, _85_ hook] --> R[helpers/runtime.py]
+  B[ApiHandler.handle_request patch, 500 responses] --> R
+  T[tool_execute_after breadcrumbs] --> R
+  R --> E[helpers/event.py: build + redact]
+  E --> C[helpers/client.py: urllib POST /api/id/store/]
+  C --> G[(GlitchTip)]
+```
+
+## Configure
+
+Set the DSN via environment (preferred: keeps it out of config files), or the `dsn` field in plugin settings (`external` section).
 
 A path prefix before the project id is kept — reverse-proxied installs like
 `https://host/glitchtip/42` work unchanged. The transport **refuses
@@ -36,12 +52,12 @@ different host; a mis-targeted DSN fails closed (see logs). Prefer `https` —
 an `http://` DSN to a non-loopback host logs a warning since event payloads
 traverse the network in cleartext.
 
-or the `dsn` field in plugin settings (`external` section). Optional:
+Settings (from `default_config.yaml`):
 
 | Setting | Env | Default |
 |---|---|---|
 | `enabled` | — | `true` |
-| `dsn` | `GLITCHTIP_DSN` | — |
+| `dsn` | `GLITCHTIP_DSN` | `""` (empty; plugin inactive) |
 | `environment` | `GLITCHTIP_ENV` | `local` |
 | `release` | `GLITCHTIP_RELEASE` | — |
 | `api_error_events`¹ | — | `true` |
@@ -111,3 +127,15 @@ shared trace ID:
 ```bash
 python -m pytest tests/ -q   # offline; loopback http.server fixture only
 ```
+
+## Status and roadmap
+
+See [ROADMAP.md](ROADMAP.md) and the [landscape research](docs/research/2026-10-10-landscape.md). Design direction: [DESIGN.md](DESIGN.md) (logo assets are a proposal pending owner sign-off).
+
+## Contributing
+
+Issues and PRs welcome. Keep it stdlib-only and offline-testable; read [AGENTS.md](AGENTS.md) first. Config keys are a three-way sync: `helpers/config.py`, `default_config.yaml`, and the table above.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
