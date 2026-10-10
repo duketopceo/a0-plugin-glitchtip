@@ -98,12 +98,16 @@ def configure(cfg: Mapping[str, Any] | None = None) -> bool:
     global _client, _environment, _release, _configured, _redact
     try:
         with _lock:
-            if _configured:
-                return is_active()
             cfg = cfg if isinstance(cfg, Mapping) else {}
             if not truthy(cfg.get("enabled", True)):
+                # disable wins even after a successful configure — teardown
+                # the client so events stop; a later enabled:true re-arms
+                if _configured:
+                    _reset()
                 log.debug("glitchtip disabled by config")
                 return False
+            if _configured:
+                return is_active()
             dsn = parse_dsn(os.getenv(ENV_DSN) or cfg.get("dsn"))
             if dsn is None:
                 log.debug("glitchtip inactive: no DSN (env %s or config dsn)", ENV_DSN)
