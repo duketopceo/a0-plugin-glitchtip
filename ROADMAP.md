@@ -9,7 +9,7 @@ Research: [docs/research/2026-10-10-landscape.md](docs/research/2026-10-10-lands
 |---|---|---|---|
 | Now | U1 | Live GlitchTip smoke test (store endpoint) | easy |
 | Now | U2 | Envelope transport fallback | medium |
-| Next | U3 | Manifest metadata and a0-plugins index listing | easy |
+| Next | U3 | Manifest metadata and a0-plugins index listing (index PR open: agent0ai/a0-plugins#618) | easy |
 | Next | U4 | Collapse the two `_85_` extensions onto one shared body | easy |
 | Later | U5 | Settings panel status chip + screenshot | medium |
 | Later | U6 | Automatic Langfuse link on events | hard |
